@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../api';
 import { FileText, Lock, Shield, User, Award, Eye, EyeOff } from 'lucide-react';
 
 const Register = () => {
@@ -58,7 +58,7 @@ const Register = () => {
     }
 
     try {
-      const response = await axios.post('/api/signup', {
+      const response = await api.post('/signup', {
         name: name.trim(),
         email,
         password,

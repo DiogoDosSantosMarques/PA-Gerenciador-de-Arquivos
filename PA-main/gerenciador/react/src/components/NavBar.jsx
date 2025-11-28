@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Disclosure } from '@headlessui/react';
 import { Menu, LogOut, Home, FilePlus, Wrench, GraduationCap, X, User as UserIcon, Bell, Shield, ChevronRight } from 'lucide-react';
 import { Link, useNavigate, useLocation } from 'react-router-dom';
-import axios from 'axios';
+import api from '../api';
 
 function classNames(...classes) {
   return classes.filter(Boolean).join(' ');
@@ -20,11 +20,7 @@ export default function NavBar() {
   useEffect(() => {
     const fetchUserProfile = async () => {
       try {
-        const response = await axios.get('/api/user/profile', {
-          headers: { 
-            'Authorization': `Bearer ${localStorage.getItem('token')}` 
-          }
-        });
+        const response = await api.get('/user/profile');
         setUserName(response.data.name);
         setUserRole(response.data.role);
       } catch (error) {

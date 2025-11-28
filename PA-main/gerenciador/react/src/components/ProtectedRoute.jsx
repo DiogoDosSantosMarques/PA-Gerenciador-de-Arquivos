@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../api';
 
 const ProtectedRoute = ({ children, adminOnly = false }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(null);
@@ -18,12 +18,8 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
     setUserRole(null);
     
     if (token) {
-      axios
-        .get('/api/authenticated', {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        })
+      api
+        .get('/authenticated')
         .then(response => {
           setIsAuthenticated(response.data.isAuthenticated);
           setUserRole(response.data.role);

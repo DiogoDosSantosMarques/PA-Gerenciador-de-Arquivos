@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import axios from 'axios';
+import api from '../../api';
 import { 
   Upload, File, FileText, Trash2, Check, Loader2, Tag, X,
   FileImage, FileVideo, FileAudio, AlertCircle
@@ -40,7 +40,7 @@ export default function UploadModal({ isOpen, onClose, onSuccess }) {
     async function fetchCategories() {
       try {
         setIsLoading(true);
-        const response = await axios.get('/api/categories');
+        const response = await api.get('/categories');
         setCategories(response.data);
         setIsLoading(false);
       } catch (error) {
@@ -89,7 +89,7 @@ export default function UploadModal({ isOpen, onClose, onSuccess }) {
     setMessage({ type: '', text: '' });
 
     try {
-      await axios.post('/api/posts', formData, {
+      await api.post('/posts', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
           Authorization: `Bearer ${token}`,

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import api from '../../api';
 import { Upload, Plus, FileText, BookOpen, Tag, Link as LinkIcon, X, File, List, CheckCircle, AlertCircle } from 'lucide-react';
 
 const Training = () => {
@@ -23,9 +23,7 @@ const Training = () => {
     }
 
     setIsLoading(true);
-    axios.get('/api/categories', {
-      headers: { Authorization: `Bearer ${token}` }
-    })
+    api.get('/categories')
       .then((response) => {
         setCategories(response.data);
         setIsLoading(false);
@@ -107,10 +105,9 @@ const Training = () => {
     setMessage({ type: '', text: '' });
 
     try {
-      const response = await axios.post('/api/trainings', formData, {
+      const response = await api.post('/trainings', formData, {
         headers: {
           'Content-Type': 'multipart/form-data',
-          Authorization: `Bearer ${token}`,
         },
       });
 

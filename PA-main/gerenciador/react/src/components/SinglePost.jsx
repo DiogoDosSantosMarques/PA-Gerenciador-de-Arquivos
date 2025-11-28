@@ -6,7 +6,7 @@ import {
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import ReactDOM from 'react-dom';
-import axios from 'axios';
+import api from '../api';
 
 export default function SinglePost({ post, category, deletePostClicked, downloadFile, editPostClicked }) {
   const { id, caption, imageName, fileType, originalFileName, createdAt, isPublic, owner } = post;
@@ -35,10 +35,7 @@ export default function SinglePost({ post, category, deletePostClicked, download
     // Buscar perfil do usuário
     const fetchUserProfile = async () => {
       try {
-        const token = localStorage.getItem('token');
-        const response = await axios.get('/api/user/profile', {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        const response = await api.get('/user/profile');
         setUserProfile(response.data);
       } catch (error) {
         console.error('Erro ao buscar perfil do usuário:', error);
@@ -95,10 +92,8 @@ export default function SinglePost({ post, category, deletePostClicked, download
   const toggleVisibility = async () => {
     setIsUpdatingVisibility(true);
     try {
-      const token = localStorage.getItem('token');
-      await axios.patch(`/api/posts/${id}/visibility`, 
-        { isPublic: !isPublic },
-        { headers: { Authorization: `Bearer ${token}` }}
+      await api.patch(`/posts/${id}/visibility`, 
+        { isPublic: !isPublic }
       );
       
       // Atualizar o estado local
@@ -119,10 +114,7 @@ export default function SinglePost({ post, category, deletePostClicked, download
   const fetchSharedUsers = async () => {
     setLoadingSharedUsers(true);
     try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`/api/posts/${id}/shared`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const response = await api.get(`/posts/${id}/shared`);
       setSharedUsers(response.data);
     } catch (error) {
       console.error('Erro ao buscar usuários compartilhados:', error);
@@ -138,14 +130,11 @@ export default function SinglePost({ post, category, deletePostClicked, download
     setShareSuccess(null);
     
     try {
-      const token = localStorage.getItem('token');
-      await axios.post(`/api/posts/${id}/share`, {
+      await api.post(`/posts/${id}/share`, {
         userEmail: shareEmail,
         canView,
         canEdit,
         canDelete
-      }, {
-        headers: { Authorization: `Bearer ${token}` }
       });
       
       setShareSuccess('Arquivo compartilhado com sucesso!');
@@ -161,10 +150,7 @@ export default function SinglePost({ post, category, deletePostClicked, download
   
   const removeShare = async (userId) => {
     try {
-      const token = localStorage.getItem('token');
-      await axios.delete(`/api/posts/${id}/share/${userId}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await api.delete(`/posts/${id}/share/${userId}`);
       
       fetchSharedUsers();
     } catch (error) {

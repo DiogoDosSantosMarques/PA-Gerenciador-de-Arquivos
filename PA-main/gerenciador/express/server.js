@@ -1,39 +1,84 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import sharp from 'sharp';
-import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import path from 'path';
+import fs from 'fs';
+import { fileURLToPath } from 'url';
 import cron from 'node-cron';
 
 import { PrismaClient } from '@prisma/client';
-import { uploadFile, deleteFile, getObjectSignedUrl } from './s3.js';
 import { checkExpiringTools } from './emailService.js';
 
 
 const app = express();
 const prisma = new PrismaClient();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
-const storage = multer.memoryStorage();
-const upload = multer({ 
-  storage: storage, 
-  limits: { fileSize: 50 * 1024 * 1024 } // 50MB de limite 
+const corsOptions = {
+  origin: 'http://localhost:3000',
+  methods: ['GET', 'POST', 'DELETE', 'PUT', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+
+const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const toBoolean = (value) => value === true || value === 'true';
+const asNumber = (value) => Number(value);
+const buildUploadUrl = (req, fileName) => `${req.protocol}://${req.get('host')}/uploads/${fileName}`;
+const generateUniqueFileName = (originalName) => `${Date.now()}-${Math.round(Math.random() * 1e9)}${path.extname(originalName)}`;
+
+const uploadDir = path.join(__dirname, 'uploads');
+fs.mkdirSync(uploadDir, { recursive: true });
+
+const localDiskStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, uploadDir),
+  filename: (_req, file, cb) => {
+    cb(null, generateUniqueFileName(file.originalname));
+  }
 });
 
-const generateFileName = (bytes = 32) => crypto.randomBytes(bytes).toString('hex');
+const localUpload = multer({ storage: localDiskStorage });
 
 const secretKey = process.env.JWT_SECRET_KEY;
+const PORT = process.env.PORT || 8080;
 
 // Middleware para permitir CORS
-app.use(cors({
-  origin: 'http://localhost:3000', 
-  methods: ['GET', 'POST', 'DELETE', 'PUT'], 
-  allowedHeaders: ['Content-Type', 'Authorization'],
-}));
+app.use(cors(corsOptions));
 
 // Middleware para interpretar o corpo das requisições como JSON
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
+app.use('/uploads', express.static(uploadDir));
+app.use((req, res, next) => {
+  res.setHeader('X-App-Version', '2025.11.27');
+  next();
+});
+
+app.get('/health', (_req, res) => {
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
+  });
+});
+
+app.post('/upload', localUpload.single('file'), (req, res) => {
+  if (!req.file) {
+    return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+  }
+
+  res.json({
+    message: 'Upload concluido com sucesso',
+    file: {
+      originalName: req.file.originalname,
+      storedAs: req.file.filename,
+      size: req.file.size,
+      path: req.file.path
+    }
+  });
+});
+
 
 // Verificação de autenticação
 const authenticateToken = (req, res, next) => {
@@ -72,7 +117,7 @@ const isAdmin = (req, res, next) => {
 // Middleware para verificar permissões de acesso a um post
 const checkPostAccess = async (req, res, next) => {
   try {
-    const postId = +req.params.id;
+    const postId = asNumber(req.params.id);
     const userId = req.userId;
     const userRole = req.userRole;
     
@@ -133,7 +178,7 @@ const checkPostAccess = async (req, res, next) => {
 // Middleware para verificar permissões de acesso a um treinamento
 const checkTrainingAccess = async (req, res, next) => {
   try {
-    const trainingId = +req.params.id;
+    const trainingId = asNumber(req.params.id);
     const userId = req.userId;
     const userRole = req.userRole;
     
@@ -197,15 +242,16 @@ app.get("/api/posts", authenticateToken, async (req, res) => {
     const { categoryId } = req.query;
     const userId = req.userId;
     const userRole = req.userRole;
+    const parsedCategoryId = categoryId ? asNumber(categoryId) : undefined;
 
-    let filter = categoryId ? { where: { categoryId: +categoryId } } : {};
+    let filter = categoryId ? { where: { categoryId: parsedCategoryId } } : {};
     
     // Se não for admin, filtrar apenas posts públicos ou com acesso
     if (userRole !== 'ADMIN') {
       filter = {
         where: {
           AND: [
-            categoryId ? { categoryId: +categoryId } : {},
+            categoryId ? { categoryId: parsedCategoryId } : {},
             {
               OR: [
                 { isPublic: true },
@@ -241,7 +287,7 @@ app.get("/api/posts", authenticateToken, async (req, res) => {
     });
 
     for (let post of posts) {
-      post.imageUrl = await getObjectSignedUrl(post.imageName);
+      post.imageUrl = buildUploadUrl(req, post.imageName);
     }
 
     res.send(posts);
@@ -252,35 +298,23 @@ app.get("/api/posts", authenticateToken, async (req, res) => {
 });
 
 // Rota para criar posts (exige autenticação)
-app.post('/api/posts', authenticateToken, upload.single('file'), async (req, res) => {
+app.post('/api/posts', authenticateToken, localUpload.single('file'), async (req, res) => {
   const file = req.file;
   const caption = req.body.caption;
   const categoryId = req.body.categoryId;
-  const isPublic = req.body.isPublic === 'true';
+  const isPublic = toBoolean(req.body.isPublic);
   const userId = req.userId;
-
+  
   if (!file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
-
-  const imageName = generateFileName();
-
+  
   try {
-    let processedBuffer = file.buffer;
-
-    try {
-      processedBuffer = await sharp(file.buffer)
-        .resize({ height: 1920, width: 1080, fit: "contain" })
-        .toBuffer();
-    } catch (imageProcessingError) {
-      console.warn('Image processing failed, using original file:', imageProcessingError.message);
-    }
-
-    await uploadFile(processedBuffer, imageName, file.mimetype);
+    const storedName = file.filename;
 
     const post = await prisma.posts.create({
       data: {
-        imageName,
+        imageName: storedName,
         originalFileName: file.originalname,
         fileType: file.mimetype,
         caption,
@@ -289,7 +323,7 @@ app.post('/api/posts', authenticateToken, upload.single('file'), async (req, res
         isPublic
       }
     });
-
+  
     res.status(201).send(post);
   } catch (error) {
     console.error('Upload error:', error);
@@ -300,28 +334,33 @@ app.post('/api/posts', authenticateToken, upload.single('file'), async (req, res
 // Rota para obter a imagem/download de um post
 app.get("/api/posts/:id/download", authenticateToken, checkPostAccess, async (req, res) => {
   try {
-    const id = +req.params.id;
+    const id = asNumber(req.params.id);
     const post = await prisma.posts.findUnique({ where: { id } });
 
     if (!post) {
       return res.status(404).json({ error: "File not found" });
     }
 
-    const imageUrl = await getObjectSignedUrl(post.imageName);
-    res.json({ 
-      url: imageUrl, 
-      originalFileName: post.originalFileName, 
+    const filePath = path.join(uploadDir, post.imageName);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Local file not found" });
+    }
+
+    const fileUrl = buildUploadUrl(req, post.imageName);
+    return res.json({ 
+      url: fileUrl,
+      originalFileName: post.originalFileName,
       fileType: post.fileType 
     });
   } catch (error) {
     console.error("Download error:", error);
-    res.status(500).json({ error: "Error generating download URL" });
+    res.status(500).json({ error: "Error downloading file" });
   }
 });
 
 // Rota para deletar posts (exige autenticação e verificação de acesso)
 app.delete("/api/posts/:id", authenticateToken, checkPostAccess, async (req, res) => {
-  const id = +req.params.id;
+  const id = asNumber(req.params.id);
   
   try {
     const post = await prisma.posts.findUnique({ where: { id } });
@@ -335,8 +374,15 @@ app.delete("/api/posts/:id", authenticateToken, checkPostAccess, async (req, res
       where: { postId: id }
     });
     
-    // Excluir o arquivo do S3
-    await deleteFile(post.imageName);
+    // Excluir o arquivo salvo localmente, se existir
+    const filePath = path.join(uploadDir, post.imageName);
+    if (fs.existsSync(filePath)) {
+      try {
+        fs.unlinkSync(filePath);
+      } catch (err) {
+        console.warn('Falha ao remover arquivo local:', err.message);
+      }
+    }
     
     // Excluir o post
     await prisma.posts.delete({ where: { id } });
@@ -351,7 +397,7 @@ app.delete("/api/posts/:id", authenticateToken, checkPostAccess, async (req, res
 // Rota para atualizar a visibilidade de um post
 app.patch("/api/posts/:id/visibility", authenticateToken, checkPostAccess, async (req, res) => {
   try {
-    const id = +req.params.id;
+    const id = asNumber(req.params.id);
     const { isPublic } = req.body;
     
     if (isPublic === undefined) {
@@ -373,7 +419,7 @@ app.patch("/api/posts/:id/visibility", authenticateToken, checkPostAccess, async
 // Rota para compartilhar um post com outro usuário
 app.post("/api/posts/:id/share", authenticateToken, checkPostAccess, async (req, res) => {
   try {
-    const postId = +req.params.id;
+    const postId = asNumber(req.params.id);
     const { userEmail, canView, canEdit, canDelete } = req.body;
     
     if (!userEmail) {
@@ -429,11 +475,60 @@ app.post("/api/posts/:id/share", authenticateToken, checkPostAccess, async (req,
   }
 });
 
+// Rota para listar usuários com quem o post está compartilhado
+app.get("/api/posts/:id/shared", authenticateToken, async (req, res) => {
+  try {
+    const postId = asNumber(req.params.id);
+    const userId = req.userId;
+    const userRole = req.userRole;
+
+    const post = await prisma.posts.findUnique({
+      where: { id: postId },
+      select: { id: true, ownerId: true }
+    });
+
+    if (!post) {
+      return res.status(404).json({ error: "Post not found" });
+    }
+
+    if (userRole !== 'ADMIN' && post.ownerId !== userId) {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const shares = await prisma.sharedAccess.findMany({
+      where: { postId },
+    });
+
+    const userIds = shares.map((s) => s.userId);
+    const users = userIds.length
+      ? await prisma.profile.findMany({
+          where: { id: { in: userIds } },
+          select: { id: true, name: true, email: true }
+        })
+      : [];
+
+    const usersById = Object.fromEntries(users.map((u) => [u.id, u]));
+    const result = shares.map((share) => ({
+      id: share.id,
+      userId: share.userId,
+      canView: share.canView,
+      canEdit: share.canEdit,
+      canDelete: share.canDelete,
+      user: usersById[share.userId] || null
+    }));
+
+    res.json(result);
+  } catch (error) {
+    console.error("List shared users error:", error);
+    res.status(500).json({ error: "Error fetching shared users" });
+  }
+});
+
 // Rota para remover compartilhamento de um post
 app.delete("/api/posts/:id/share/:userId", authenticateToken, checkPostAccess, async (req, res) => {
   try {
-    const postId = +req.params.id;
-    const userId = +req.params.userId;
+    const postId = asNumber(req.params.id);
+    const userId = asNumber(req.params.userId);
     
     const deletedShare = await prisma.sharedAccess.deleteMany({
       where: {
@@ -464,7 +559,6 @@ app.post("/api/tools", authenticateToken, async (req, res) => {
   }
 
   // Validação básica de email
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(responsibleEmail)) {
     return res.status(400).json({ error: 'Email inválido' });
   }
@@ -498,7 +592,6 @@ app.put("/api/tools/:id", authenticateToken, async (req, res) => {
   }
 
   // Validação básica de email
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   if (!emailRegex.test(responsibleEmail)) {
     return res.status(400).json({ error: 'Email inválido' });
   }
@@ -534,7 +627,7 @@ app.delete("/api/tools/:id", authenticateToken, async (req, res) => {
 });
 
 // Rota para criar treinamento
-app.post('/api/trainings', authenticateToken, upload.single('file'), async (req, res) => {
+app.post('/api/trainings', authenticateToken, localUpload.single('file'), async (req, res) => {
   const file = req.file;
   const { title, description, categoryId, links, isPublic } = req.body;
   const userId = req.userId;
@@ -551,31 +644,19 @@ app.post('/api/trainings', authenticateToken, upload.single('file'), async (req,
     return res.status(400).json({ error: 'Nenhum arquivo enviado' });
   }
 
-  const fileName = generateFileName();
-
   try {
-    let processedBuffer = file.buffer;
-
-    try {
-      processedBuffer = await sharp(file.buffer)
-        .resize({ height: 1920, width: 1080, fit: "contain" })
-        .toBuffer();
-    } catch (imageProcessingError) {
-      console.warn('Processamento de imagem falhou, usando arquivo original:', imageProcessingError.message);
-    }
-
-    await uploadFile(processedBuffer, fileName, file.mimetype);
+    const storedName = file.filename;
 
     const training = await prisma.training.create({
       data: {
         title,
         description,
-        imageName: fileName,
+        imageName: storedName,
         originalFileName: file.originalname,
         fileType: file.mimetype,
         categoryId: +categoryId,
         ownerId: userId,
-        isPublic: isPublic === 'true',
+        isPublic: toBoolean(isPublic),
         trainingLinks: {
           create: linksArray.map((link) => ({ url: link })),
         },
@@ -641,10 +722,10 @@ app.get('/api/trainings', authenticateToken, async (req, res) => {
       },
     });
 
-    // Gerar URLs assinadas para as imagens
+    // Montar URLs locais para as imagens
     for (let training of trainings) {
       if (training.imageName) {
-        training.imageUrl = await getObjectSignedUrl(training.imageName);
+        training.imageUrl = buildUploadUrl(req, training.imageName);
       }
     }
 
@@ -658,7 +739,7 @@ app.get('/api/trainings', authenticateToken, async (req, res) => {
 // Rota para obter a imagem de um treinamento
 app.get("/api/trainings/:id/image", authenticateToken, checkTrainingAccess, async (req, res) => {
   try {
-    const id = +req.params.id;
+    const id = asNumber(req.params.id);
 
     const training = await prisma.training.findUnique({ where: { id } });
     if (!training) {
@@ -669,12 +750,12 @@ app.get("/api/trainings/:id/image", authenticateToken, checkTrainingAccess, asyn
       return res.status(404).json({ error: "Nenhuma imagem associada a este treinamento" });
     }
 
-    const imageUrl = await getObjectSignedUrl(training.imageName);
-    if (!imageUrl) {
-      return res.status(500).json({ error: "Erro ao gerar URL da imagem" });
+    const filePath = path.join(uploadDir, training.imageName);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Arquivo n�o encontrado localmente" });
     }
 
-    // Retorne a URL assinada e detalhes do arquivo
+    const imageUrl = buildUploadUrl(req, training.imageName);
     res.json({ 
       url: imageUrl, 
       originalFileName: training.originalFileName, 
@@ -689,7 +770,7 @@ app.get("/api/trainings/:id/image", authenticateToken, checkTrainingAccess, asyn
 // Rota para download do arquivo de treinamento
 app.get("/api/trainings/:id/download", authenticateToken, checkTrainingAccess, async (req, res) => {
   try {
-    const id = +req.params.id;
+    const id = asNumber(req.params.id);
     const training = await prisma.training.findUnique({ where: { id } });
 
     if (!training) {
@@ -700,7 +781,12 @@ app.get("/api/trainings/:id/download", authenticateToken, checkTrainingAccess, a
       return res.status(404).json({ error: "Nenhum arquivo associado a este treinamento" });
     }
 
-    const fileUrl = await getObjectSignedUrl(training.imageName);
+    const filePath = path.join(uploadDir, training.imageName);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Arquivo n�o encontrado localmente" });
+    }
+
+    const fileUrl = buildUploadUrl(req, training.imageName);
     res.json({ 
       url: fileUrl, 
       originalFileName: training.originalFileName, 
@@ -715,7 +801,7 @@ app.get("/api/trainings/:id/download", authenticateToken, checkTrainingAccess, a
 // Rota para deletar um treinamento
 app.delete("/api/trainings/:id", authenticateToken, checkTrainingAccess, async (req, res) => {
   try {
-    const id = +req.params.id;
+    const id = asNumber(req.params.id);
     
     const training = await prisma.training.findUnique({
       where: { id },
@@ -736,9 +822,16 @@ app.delete("/api/trainings/:id", authenticateToken, checkTrainingAccess, async (
       where: { trainingId: id }
     });
     
-    // Excluir o arquivo do S3 se existir
+    // Excluir o arquivo salvo localmente, se existir
     if (training.imageName) {
-      await deleteFile(training.imageName);
+      const filePath = path.join(uploadDir, training.imageName);
+      if (fs.existsSync(filePath)) {
+        try {
+          fs.unlinkSync(filePath);
+        } catch (err) {
+          console.warn('Falha ao remover arquivo local de treinamento:', err.message);
+        }
+      }
     }
     
     // Excluir o treinamento
@@ -754,7 +847,7 @@ app.delete("/api/trainings/:id", authenticateToken, checkTrainingAccess, async (
 // Rota para atualizar a visibilidade de um treinamento
 app.patch("/api/trainings/:id/visibility", authenticateToken, checkTrainingAccess, async (req, res) => {
   try {
-    const id = +req.params.id;
+    const id = asNumber(req.params.id);
     const { isPublic } = req.body;
     
     if (isPublic === undefined) {
@@ -776,7 +869,7 @@ app.patch("/api/trainings/:id/visibility", authenticateToken, checkTrainingAcces
 // Rota para compartilhar um treinamento com outro usuário
 app.post("/api/trainings/:id/share", authenticateToken, checkTrainingAccess, async (req, res) => {
   try {
-    const trainingId = +req.params.id;
+    const trainingId = asNumber(req.params.id);
     const { userEmail, canView, canEdit, canDelete } = req.body;
     
     if (!userEmail) {
@@ -835,8 +928,8 @@ app.post("/api/trainings/:id/share", authenticateToken, checkTrainingAccess, asy
 // Rota para remover compartilhamento de um treinamento
 app.delete("/api/trainings/:id/share/:userId", authenticateToken, checkTrainingAccess, async (req, res) => {
   try {
-    const trainingId = +req.params.id;
-    const userId = +req.params.userId;
+    const trainingId = asNumber(req.params.id);
+    const userId = asNumber(req.params.userId);
     
     const deletedShare = await prisma.sharedAccess.deleteMany({
       where: {
@@ -853,27 +946,78 @@ app.delete("/api/trainings/:id/share/:userId", authenticateToken, checkTrainingA
 });
 
 // Rota para obter categorias
-app.get("/api/categories", async (req, res) => {
-  const categories = await prisma.category.findMany();
-  res.send(categories);
+app.get("/api/categories", async (_req, res) => {
+  try {
+    const categories = await prisma.category.findMany();
+    res.send(categories);
+  } catch (error) {
+    console.error("Erro ao listar categorias:", error);
+    res.status(500).json({ error: "Erro ao listar categorias" });
+  }
+});
+
+// Criar categoria (apenas admin)
+app.post("/api/categories", authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) {
+      return res.status(400).json({ error: "Nome da categoria é obrigatório" });
+    }
+
+    const existing = await prisma.category.findFirst({
+      where: { name: { equals: name.trim(), mode: 'insensitive' } }
+    });
+
+    if (existing) {
+      return res.status(409).json({ error: "Categoria já existe" });
+    }
+
+    const category = await prisma.category.create({
+      data: { name: name.trim() }
+    });
+
+    res.status(201).json(category);
+  } catch (error) {
+    console.error("Erro ao criar categoria:", error);
+    res.status(500).json({ error: "Erro interno ao criar categoria" });
+  }
+});
+
+// Deletar categoria (apenas admin)
+app.delete("/api/categories/:id", authenticateToken, isAdmin, async (req, res) => {
+  try {
+    const id = asNumber(req.params.id);
+
+    const inUse = await prisma.posts.findFirst({ where: { categoryId: id } }) ||
+                  await prisma.training.findFirst({ where: { categoryId: id } });
+    if (inUse) {
+      return res.status(400).json({ error: "Categoria em uso e não pode ser removida" });
+    }
+
+    await prisma.category.delete({ where: { id } });
+    res.json({ message: "Categoria removida" });
+  } catch (error) {
+    console.error("Erro ao remover categoria:", error);
+    res.status(500).json({ error: "Erro interno ao remover categoria" });
+  }
 });
 
 // Rota para obter a imagem de um post
 app.get("/api/posts/:id/image", authenticateToken, checkPostAccess, async (req, res) => {
   try {
-    const id = +req.params.id
+    const id = asNumber(req.params.id)
 
     const post = await prisma.posts.findUnique({ where: { id } });
     if (!post) {
       return res.status(404).json({ error: "Post não encontrado" });
     }
 
-    const imageUrl = await getObjectSignedUrl(post.imageName);
-    if (!imageUrl) {
-      return res.status(500).json({ error: "Erro ao gerar URL da imagem" });
+    const filePath = path.join(uploadDir, post.imageName);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: "Arquivo n�o encontrado localmente" });
     }
 
-    // Retorne a URL assinada
+    const imageUrl = buildUploadUrl(req, post.imageName);
     res.json({ url: imageUrl });
   } catch (error) {
     console.error("Erro na rota de imagem:", error);
@@ -993,7 +1137,7 @@ app.get("/api/users", authenticateToken, isAdmin, async (req, res) => {
 // Rota para promover um usuário a admin (apenas para admin)
 app.patch("/api/users/:id/promote", authenticateToken, isAdmin, async (req, res) => {
   try {
-    const userId = +req.params.id;
+    const userId = asNumber(req.params.id);
     
     const user = await prisma.profile.findUnique({
       where: { id: userId }
@@ -1024,7 +1168,7 @@ app.patch("/api/users/:id/promote", authenticateToken, isAdmin, async (req, res)
 // Rota para rebaixar um admin a usuário comum (apenas para admin)
 app.patch("/api/users/:id/demote", authenticateToken, isAdmin, async (req, res) => {
   try {
-    const userId = +req.params.id;
+    const userId = asNumber(req.params.id);
     
     // Não permitir que um admin rebaixe a si mesmo
     if (userId === req.userId) {
@@ -1058,9 +1202,14 @@ app.patch("/api/users/:id/demote", authenticateToken, isAdmin, async (req, res) 
 });
 
 // Configurar tarefa CRON para verificar ferramentas que expiram em breve todos os dias às 6h da manhã
-cron.schedule('* * * * *', async () => {
-  console.log('Executando verificação diária de ferramentas próximas da expiração...');
-  await checkExpiringTools();
-});
+if (process.env.NODE_ENV === "production") {
+  cron.schedule('0 6 * * *', async () => {
+    console.log('Executando verificação diária de ferramentas próximas da expiração...');
+    await checkExpiringTools();
+  });
+} else {
+  console.log("CRON desabilitado em ambiente local.");
+}
 
-app.listen(8080, () => console.log("listening on port 8080"));
+
+app.listen(PORT, () => console.log(`listening on port ${PORT}`));
