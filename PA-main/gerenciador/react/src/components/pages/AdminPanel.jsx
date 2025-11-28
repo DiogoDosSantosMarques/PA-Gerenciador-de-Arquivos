@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import { Shield, UserPlus, UserMinus, User, Search, AlertCircle, CheckCircle, RefreshCw } from 'lucide-react';
+import api from '../../api';
+import { Shield, UserPlus, UserMinus, User, Search, AlertCircle, CheckCircle, RefreshCw, Tag, Plus, Trash2 } from 'lucide-react';
 
 const AdminPanel = () => {
   const [users, setUsers] = useState([]);
@@ -9,9 +9,14 @@ const AdminPanel = () => {
   const [success, setSuccess] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [actionInProgress, setActionInProgress] = useState(false);
+  const [categories, setCategories] = useState([]);
+  const [catName, setCatName] = useState('');
+  const [loadingCategories, setLoadingCategories] = useState(false);
+  const [catMessage, setCatMessage] = useState(null);
 
   useEffect(() => {
     fetchUsers();
+    fetchCategories();
   }, []);
 
   const fetchUsers = async () => {
@@ -19,12 +24,7 @@ const AdminPanel = () => {
     setError(null);
     
     try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get('/api/users', {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
+      const response = await api.get('/users');
       
       setUsers(response.data);
     } catch (error) {
@@ -35,18 +35,59 @@ const AdminPanel = () => {
     }
   };
 
+  const fetchCategories = async () => {
+    setLoadingCategories(true);
+    setCatMessage(null);
+    try {
+      const res = await api.get('/categories');
+      setCategories(res.data);
+    } catch (error) {
+      console.error('Erro ao carregar categorias:', error);
+      setCatMessage({ type: 'error', text: 'Não foi possível carregar categorias.' });
+    } finally {
+      setLoadingCategories(false);
+    }
+  };
+
+  const createCategory = async () => {
+    if (!catName.trim()) {
+      setCatMessage({ type: 'error', text: 'Informe um nome para a categoria.' });
+      return;
+    }
+    setCatMessage(null);
+    try {
+      const res = await api.post('/categories', { name: catName.trim() });
+      setCategories((prev) => [...prev, res.data]);
+      setCatName('');
+      setCatMessage({ type: 'success', text: 'Categoria criada com sucesso.' });
+    } catch (error) {
+      console.error('Erro ao criar categoria:', error);
+      const msg = error.response?.data?.error || 'Não foi possível criar a categoria.';
+      setCatMessage({ type: 'error', text: msg });
+    }
+  };
+
+  const deleteCategory = async (id) => {
+    const confirmDelete = window.confirm('Deseja remover esta categoria? Certifique-se de que não está em uso.');
+    if (!confirmDelete) return;
+    try {
+      await api.delete(`/categories/${id}`);
+      setCategories((prev) => prev.filter((c) => c.id !== id));
+      setCatMessage({ type: 'success', text: 'Categoria removida.' });
+    } catch (error) {
+      console.error('Erro ao remover categoria:', error);
+      const msg = error.response?.data?.error || 'Não foi possível remover a categoria.';
+      setCatMessage({ type: 'error', text: msg });
+    }
+  };
+
   const promoteUser = async (userId) => {
     setActionInProgress(true);
     setError(null);
     setSuccess(null);
     
     try {
-      const token = localStorage.getItem('token');
-      await axios.patch(`/api/users/${userId}/promote`, {}, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
+      await api.patch(`/users/${userId}/promote`, {});
       
       setSuccess('Usuário promovido a administrador com sucesso!');
       fetchUsers(); // Atualiza a lista de usuários
@@ -64,12 +105,7 @@ const AdminPanel = () => {
     setSuccess(null);
     
     try {
-      const token = localStorage.getItem('token');
-      await axios.patch(`/api/users/${userId}/demote`, {}, {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      });
+      await api.patch(`/users/${userId}/demote`, {});
       
       setSuccess('Usuário rebaixado para usuário comum com sucesso!');
       fetchUsers(); // Atualiza a lista de usuários
@@ -204,6 +240,65 @@ const AdminPanel = () => {
               ))}
             </ul>
           )}
+        </div>
+
+        {/* Gerenciamento de categorias */}
+        <div className="mt-10 bg-white rounded-xl shadow-md overflow-hidden">
+          <div className="px-6 py-4 border-b border-gray-200 bg-gray-50 flex items-center space-x-2">
+            <Tag className="h-5 w-5 text-indigo-600" />
+            <h2 className="text-lg font-medium text-gray-900">Categorias</h2>
+          </div>
+
+          <div className="p-6 space-y-4">
+            {catMessage && (
+              <div className={`p-3 rounded-md text-sm ${catMessage.type === 'error' ? 'bg-red-50 text-red-700 border border-red-200' : 'bg-green-50 text-green-700 border border-green-200'}`}>
+                {catMessage.text}
+              </div>
+            )}
+
+            <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-3 space-y-3 sm:space-y-0">
+              <input
+                type="text"
+                value={catName}
+                onChange={(e) => setCatName(e.target.value)}
+                placeholder="Nome da categoria"
+                className="flex-1 rounded-lg border border-gray-300 px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+              />
+              <button
+                onClick={createCategory}
+                className="inline-flex items-center px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+              >
+                <Plus className="h-4 w-4 mr-2" /> Criar
+              </button>
+              <button
+                onClick={fetchCategories}
+                className="inline-flex items-center px-3 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                <RefreshCw className={`h-4 w-4 mr-2 ${loadingCategories ? 'animate-spin' : ''}`} /> Atualizar
+              </button>
+            </div>
+
+            {loadingCategories ? (
+              <p className="text-sm text-gray-500">Carregando categorias...</p>
+            ) : categories.length === 0 ? (
+              <p className="text-sm text-gray-500">Nenhuma categoria cadastrada.</p>
+            ) : (
+              <ul className="divide-y divide-gray-200">
+                {categories.map((cat) => (
+                  <li key={cat.id} className="py-3 flex items-center justify-between">
+                    <span className="text-gray-800">{cat.name}</span>
+                    <button
+                      onClick={() => deleteCategory(cat.id)}
+                      className="p-2 rounded-full hover:bg-red-50 transition-colors"
+                      title="Remover categoria"
+                    >
+                      <Trash2 className="h-4 w-4 text-red-500" />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
       </div>
     </div>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import axios from 'axios'
+import api from '../../api'
 import SinglePost from '../SinglePost'
 import { FolderPlus, FileQuestion, Loader2, Filter, X, Search, RefreshCw } from 'lucide-react'
 import UploadModal from './NewPost'  // Importamos o componente de modal
@@ -25,8 +25,8 @@ function App() {
     try {
       setIsLoading(true)
       const [postsResponse, categoriesResponse] = await Promise.all([
-        axios.get("/api/posts"),
-        axios.get("/api/categories")
+        api.get("/posts"),
+        api.get("/categories")
       ])
 
       //Garantir que todas campos obrigatórios estejam preenchidos
@@ -60,7 +60,7 @@ function App() {
 
   const deletePostClicked = async ({ id }) => {
     try {
-      await axios.delete(`/api/posts/${id}`)
+      await api.delete(`/posts/${id}`)
       setPosts(posts.filter(post => post.id !== id))
     } catch (error) {
       console.error(error.response?.data || error.message)
@@ -70,7 +70,7 @@ function App() {
   
   const downloadFile = async ({id}) => {
     try {
-      const response = await axios.get(`/api/posts/${id}/download`)
+      const response = await api.get(`/posts/${id}/download`)
       
       // Cria uma âncora para iniciar o download do arquivo.
       const a = document.createElement('a')

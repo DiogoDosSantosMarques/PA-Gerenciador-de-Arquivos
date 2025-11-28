@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Trash2, Pencil, Plus, AlertCircle, Wrench, Calendar, User, FileText, SortAsc, SortDesc, Filter, Mail, Clock } from 'lucide-react';
-import axios from "axios";
+import api from "../../api";
 
 const ToolsAndLicenses = () => {
   const [tools, setTools] = useState([]);
@@ -31,7 +31,7 @@ const ToolsAndLicenses = () => {
 
   const fetchTools = () => {
     setIsLoading(true);
-    axios.get("/api/tools")
+    api.get("/tools")
       .then((response) => {
         setTools(response.data);
         setFilteredTools(response.data);
@@ -157,7 +157,7 @@ const ToolsAndLicenses = () => {
     }
 
     if (formData.id) {
-      axios.put(`/api/tools/${formData.id}`, formData)
+      api.put(`/tools/${formData.id}`, formData)
         .then(() => {
           setShowForm(false);
           setFormData({
@@ -172,7 +172,7 @@ const ToolsAndLicenses = () => {
         })
         .catch((error) => console.error("Erro ao atualizar ferramenta:", error));
     } else {
-      axios.post("/api/tools", formData)
+      api.post("/tools", formData)
         .then(() => {
           setShowForm(false);
           setFormData({
@@ -191,7 +191,7 @@ const ToolsAndLicenses = () => {
 
   const handleDelete = (id) => {
     if (window.confirm("Tem certeza de que deseja excluir esta ferramenta?")) {
-      axios.delete(`/api/tools/${id}`)
+      api.delete(`/tools/${id}`)
         .then(() => {
           fetchTools();
         })

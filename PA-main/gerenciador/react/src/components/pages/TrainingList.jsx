@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
-import { Search, Filter, BookOpen, Link as LinkIcon, Maximize2, X, Download, File, FileVideo, FileAudio, FileImage } from 'lucide-react';
+import api from '../../api';
+import { Search, Filter, BookOpen, Link as LinkIcon, Maximize2, X, Download, Trash2, Share2, Globe2, Lock, File, FileVideo, FileAudio, FileImage } from 'lucide-react';
 
 const TrainingList = () => {
   const [trainings, setTrainings] = useState([]);
@@ -13,8 +13,8 @@ const TrainingList = () => {
 
   useEffect(() => {
     Promise.all([
-      axios.get('/api/trainings'),
-      axios.get('/api/categories')
+      api.get('/trainings'),
+      api.get('/categories')
     ]).then(([trainingsResponse, categoriesResponse]) => {
       setTrainings(trainingsResponse.data);
       setCategories(categoriesResponse.data);
@@ -24,6 +24,10 @@ const TrainingList = () => {
       setLoading(false);
     });
   }, []);
+
+  const totalTrainings = trainings.length;
+  const publicTrainings = trainings.filter((t) => t.isPublic).length;
+  const privateTrainings = totalTrainings - publicTrainings;
 
   const getFileIcon = (type) => {
     const fileIcons = {
@@ -47,7 +51,7 @@ const TrainingList = () => {
 
   const downloadFile = async (training) => {
     try {
-      const response = await axios.get(`/api/trainings/${training.id}/download`);
+      const response = await api.get(`/trainings/${training.id}/download`);
       const { url, originalFileName } = response.data;
       
       const link = document.createElement('a');
@@ -71,11 +75,81 @@ const TrainingList = () => {
     return matchesSearch && matchesCategory;
   });
 
+  const toggleVisibility = async (training) => {
+    try {
+      const response = await api.patch(`/trainings/${training.id}/visibility`, {
+        isPublic: !training.isPublic,
+      });
+      const updated = response.data;
+      setTrainings((prev) =>
+        prev.map((t) => (t.id === training.id ? { ...t, isPublic: updated.isPublic } : t))
+      );
+      if (selectedTraining?.id === training.id) {
+        setSelectedTraining((prev) => prev ? { ...prev, isPublic: updated.isPublic } : prev);
+      }
+    } catch (error) {
+      console.error('Erro ao atualizar visibilidade:', error);
+      alert('Não foi possível alterar a visibilidade. Tente novamente.');
+    }
+  };
+
+  const shareTraining = async (training) => {
+    const userEmail = window.prompt('E-mail do usuário para compartilhar:');
+    if (!userEmail) return;
+
+    const canEdit = window.confirm('Permitir edição para este usuário?');
+    const canDelete = window.confirm('Permitir exclusão para este usuário?');
+
+    try {
+      await api.post(`/trainings/${training.id}/share`, {
+        userEmail,
+        canView: true,
+        canEdit,
+        canDelete,
+      });
+      alert('Treinamento compartilhado com sucesso.');
+    } catch (error) {
+      console.error('Erro ao compartilhar treinamento:', error);
+      alert('Não foi possível compartilhar. Verifique o e-mail e tente novamente.');
+    }
+  };
+
+  const deleteTraining = async (training) => {
+    const confirmDelete = window.confirm(`Deseja remover o treinamento "${training.title}"?`);
+    if (!confirmDelete) return;
+
+    try {
+      await api.delete(`/trainings/${training.id}`);
+      setTrainings((prev) => prev.filter((t) => t.id !== training.id));
+      if (selectedTraining?.id === training.id) {
+        setSelectedTraining(null);
+      }
+    } catch (error) {
+      console.error('Erro ao remover treinamento:', error);
+      alert('Não foi possível remover o treinamento. Tente novamente.');
+    }
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-8 bg-gray-50 min-h-screen">
       <div className="flex items-center mb-8">
         <BookOpen className="w-10 h-10 mr-4 text-blue-600" />
         <h2 className="text-3xl font-bold text-gray-800">Lista de Treinamentos</h2>
+      </div>
+
+      <div className="mb-6 grid grid-cols-1 sm:grid-cols-3 gap-3">
+        <div className="bg-white rounded-lg border border-gray-100 shadow-sm p-4">
+          <p className="text-xs uppercase tracking-wide text-gray-500">Total</p>
+          <p className="text-2xl font-semibold text-gray-800">{totalTrainings}</p>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-100 shadow-sm p-4">
+          <p className="text-xs uppercase tracking-wide text-gray-500">Públicos</p>
+          <p className="text-2xl font-semibold text-green-600">{publicTrainings}</p>
+        </div>
+        <div className="bg-white rounded-lg border border-gray-100 shadow-sm p-4">
+          <p className="text-xs uppercase tracking-wide text-gray-500">Privados</p>
+          <p className="text-2xl font-semibold text-gray-800">{privateTrainings}</p>
+        </div>
       </div>
 
       <div className="mb-8 flex space-x-4">
@@ -156,6 +230,17 @@ const TrainingList = () => {
                     <h3 className="text-xl font-bold text-gray-800 mb-2">
                       {training.title}
                     </h3>
+                    <div className="flex items-center space-x-2 mb-2">
+                      {training.isPublic ? (
+                        <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-green-100 text-green-700">
+                          <Globe2 className="w-3 h-3 mr-1" /> Público
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-gray-100 text-gray-700">
+                          <Lock className="w-3 h-3 mr-1" /> Privado
+                        </span>
+                      )}
+                    </div>
                     <p className="text-gray-600 mb-4">{training.description}</p>
                     
                     <div className="flex items-center text-sm text-gray-500 mb-4">
@@ -190,13 +275,40 @@ const TrainingList = () => {
                         </div>
                       )}
                     </div>
-                    <button
-                      onClick={() => downloadFile(training)}
-                      className="p-2 rounded-full hover:bg-gray-200 transition-colors duration-200"
-                      title="Download arquivo"
-                    >
-                      <Download className="w-5 h-5 text-gray-500" />
-                    </button>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={() => toggleVisibility(training)}
+                        className="p-2 rounded-full hover:bg-gray-200 transition-colors duration-200"
+                        title={training.isPublic ? 'Tornar privado' : 'Tornar público'}
+                      >
+                        {training.isPublic ? (
+                          <Lock className="w-5 h-5 text-gray-500" />
+                        ) : (
+                          <Globe2 className="w-5 h-5 text-gray-500" />
+                        )}
+                      </button>
+                      <button
+                        onClick={() => shareTraining(training)}
+                        className="p-2 rounded-full hover:bg-gray-200 transition-colors duration-200"
+                        title="Compartilhar treinamento"
+                      >
+                        <Share2 className="w-5 h-5 text-gray-500" />
+                      </button>
+                      <button
+                        onClick={() => downloadFile(training)}
+                        className="p-2 rounded-full hover:bg-gray-200 transition-colors duration-200"
+                        title="Download arquivo"
+                      >
+                        <Download className="w-5 h-5 text-gray-500" />
+                      </button>
+                      <button
+                        onClick={() => deleteTraining(training)}
+                        className="p-2 rounded-full hover:bg-red-100 transition-colors duration-200"
+                        title="Remover treinamento"
+                      >
+                        <Trash2 className="w-5 h-5 text-red-500" />
+                      </button>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -223,15 +335,18 @@ const TrainingList = () => {
             </button>
             
             <div className="flex flex-col items-center">
-              {selectedTraining.imageUrl ? (
-                <img 
-                  src={selectedTraining.imageUrl} 
-                  alt={selectedTraining.title} 
-                  className="max-w-full max-h-64 object-contain mb-4"
-                />
-              ) : (
-                <FileIconComponent className="w-24 h-24 text-gray-500 mb-4" />
-              )}
+              {(() => {
+                const PreviewFileIcon = getFileIcon(selectedTraining.fileType || 'default');
+                return selectedTraining.imageUrl ? (
+                  <img 
+                    src={selectedTraining.imageUrl} 
+                    alt={selectedTraining.title} 
+                    className="max-w-full max-h-64 object-contain mb-4"
+                  />
+                ) : (
+                  <PreviewFileIcon className="w-24 h-24 text-gray-500 mb-4" />
+                );
+              })()}
               
               <h3 className="text-xl font-semibold text-gray-800 mb-2">
                 {selectedTraining.title}
@@ -242,12 +357,32 @@ const TrainingList = () => {
               <p className="text-xs text-gray-500 mb-4">
                 Tipo de arquivo: {selectedTraining.fileType || 'Não definido'}
               </p>
-              <button
-                onClick={() => downloadFile(selectedTraining)}
-                className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-              >
-                Baixar arquivo
-              </button>
+              <div className="flex flex-col w-full space-y-2">
+                <button
+                  onClick={() => toggleVisibility(selectedTraining)}
+                  className="w-full px-4 py-2 bg-gray-100 text-gray-800 rounded-md hover:bg-gray-200 transition-colors"
+                >
+                  {selectedTraining.isPublic ? 'Tornar privado' : 'Tornar público'}
+                </button>
+                <button
+                  onClick={() => shareTraining(selectedTraining)}
+                  className="w-full px-4 py-2 bg-gray-100 text-gray-800 rounded-md hover:bg-gray-200 transition-colors"
+                >
+                  Compartilhar
+                </button>
+                <button
+                  onClick={() => downloadFile(selectedTraining)}
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
+                >
+                  Baixar arquivo
+                </button>
+                <button
+                  onClick={() => deleteTraining(selectedTraining)}
+                  className="w-full px-4 py-2 bg-red-100 text-red-700 rounded-md hover:bg-red-200 transition-colors"
+                >
+                  Remover treinamento
+                </button>
+              </div>
             </div>
           </div>
         </div>

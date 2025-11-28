@@ -10,22 +10,12 @@ import Training from './components/pages/Training'
 import TrainingList from './components/pages/TrainingList'
 import AdminPanel from './components/pages/AdminPanel'
 
-import axios from 'axios';
-
 import Layout from './Layout'
 import ProtectedRoute from './components/ProtectedRoute'
 
 import './index.css'
 
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
-
-axios.interceptors.request.use(config => {
-  const token = localStorage.getItem('token'); // Pega o token do LocalStorage
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`; // Adiciona o token no cabeçalho
-  }
-  return config;
-});
 
 ReactDOM.createRoot(document.getElementById('root')).render(
   <React.StrictMode>
