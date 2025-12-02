@@ -5,6 +5,15 @@ Esse é o nosso projeto desenvolvido para o 5º Semestre do curso de análise e 
 ## 🌐 **URL de Acesso ao Projeto**
 > 🟦 **https://frontend-pa-production.up.railway.app/**
 
+### Login Adminstrador
+E-mail: 
+``` bash
+admin@exemplo.com
+```
+Senha:
+``` bash
+ senha_secreta
+```
 
 ## Tecnologias Utilizadas
 
