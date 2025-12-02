@@ -2,8 +2,6 @@
 
 Esse é o nosso projeto desenvolvido para o 5º Semestre do curso de análise e desenvolvimento de sistemas no Projeto Aplicado IV.
 
-Escolhemos o Desafio 06, que tem o Objetivo de desenvolver um Gerenciador de documentos e ferramentas.
-
 ## Tecnologias Utilizadas
 
 Este projeto utiliza as seguintes tecnologias:
