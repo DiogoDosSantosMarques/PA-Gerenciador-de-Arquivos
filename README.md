@@ -12,7 +12,7 @@ admin@exemplo.com
 ```
 Senha:
 ``` bash
- senha_secreta
+senha_secreta
 ```
 
 ## Tecnologias Utilizadas
